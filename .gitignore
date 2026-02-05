@@ -1,0 +1,12 @@
+# Node / Next
+node_modules/
+.next/
+dist/
+
+# Python
+__pycache__/
+venv/
+.env
+
+# OS
+.DS_Store

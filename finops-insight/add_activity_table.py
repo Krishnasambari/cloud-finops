@@ -1,19 +1,11 @@
-from sqlalchemy import Column, Integer, String, DateTime
-from sqlalchemy.orm import declarative_base
 from app.database import engine
-from datetime import datetime
+from app.models import AwsActivity
 
-Base = declarative_base()
 
-class AwsActivity(Base):
-    __tablename__ = "aws_activity"
+def main() -> None:
+    AwsActivity.__table__.create(bind=engine, checkfirst=True)
+    print("aws_activity table created")
 
-    id = Column(Integer, primary_key=True)
-    event_time = Column(DateTime)
-    service = Column(String(100))
-    event_name = Column(String(100))
-    username = Column(String(100))
-    source_ip = Column(String(50))
 
-Base.metadata.create_all(bind=engine)
-print("aws_activity table created")
+if __name__ == "__main__":
+    main()

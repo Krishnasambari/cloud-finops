@@ -1,59 +1,64 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
 import pandas as pd
 from sqlalchemy import text
+
 from app.database import SessionLocal
 
-CSV_FILE = "/home/krishna/costs.csv"
-ACCOUNT_ID = "varsityedu"   # change later if needed
 
-# Read CSV (handle BOM + quotes)
-df = pd.read_csv(CSV_FILE, encoding="utf-8-sig")
+def normalize_csv(csv_path: Path) -> pd.DataFrame:
+    df = pd.read_csv(csv_path, encoding="utf-8-sig")
+    df = df.rename(columns={df.columns[0]: "usage_date"})
+    df = df[df["usage_date"] != "Service total"]
+    df["usage_date"] = pd.to_datetime(df["usage_date"], errors="coerce")
+    df = df.dropna(subset=["usage_date"])
 
-# Rename first column to usage_date
-df.rename(columns={df.columns[0]: "usage_date"}, inplace=True)
+    melted = df.melt(id_vars=["usage_date"], var_name="service", value_name="cost")
+    melted["service"] = melted["service"].str.replace(r"\(\$\)", "", regex=True).str.strip()
+    melted["cost"] = pd.to_numeric(melted["cost"], errors="coerce")
+    melted = melted.dropna(subset=["cost"])
+    return melted[melted["cost"] > 0]
 
-# Remove "Service total" row
-df = df[df["usage_date"] != "Service total"]
 
-# Convert usage_date to date
-df["usage_date"] = pd.to_datetime(df["usage_date"], errors="coerce")
+def import_rows(csv_path: Path, account_id: str) -> int:
+    rows = normalize_csv(csv_path)
+    db = SessionLocal()
+    try:
+        for _, row in rows.iterrows():
+            db.execute(
+                text(
+                    """
+                    INSERT INTO aws_cost_daily (usage_date, account_id, service, cost)
+                    VALUES (:usage_date, :account_id, :service, :cost)
+                    ON CONFLICT (usage_date, account_id, service)
+                    DO UPDATE SET cost = EXCLUDED.cost
+                    """
+                ),
+                {
+                    "usage_date": row["usage_date"].date(),
+                    "account_id": account_id,
+                    "service": row["service"],
+                    "cost": float(row["cost"]),
+                },
+            )
+        db.commit()
+        return len(rows)
+    finally:
+        db.close()
 
-# Melt wide → long format
-df_melted = df.melt(
-    id_vars=["usage_date"],
-    var_name="service",
-    value_name="cost"
-)
 
-# Clean service names (remove ($))
-df_melted["service"] = (
-    df_melted["service"]
-    .str.replace(r"\(\$\)", "", regex=True)
-    .str.strip()
-)
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Import normalized AWS costs CSV")
+    parser.add_argument("--csv", required=True, help="Path to source CSV file")
+    parser.add_argument("--account-id", default="default-account", help="Account id to store in DB")
+    args = parser.parse_args()
 
-# Convert cost to numeric, drop empty/zero
-df_melted["cost"] = pd.to_numeric(df_melted["cost"], errors="coerce")
-df_melted = df_melted.dropna(subset=["cost"])
-df_melted = df_melted[df_melted["cost"] > 0]
+    count = import_rows(csv_path=Path(args.csv), account_id=args.account_id)
+    print(f"Imported {count} rows from {args.csv}")
 
-db = SessionLocal()
 
-for _, row in df_melted.iterrows():
-    db.execute(
-        text("""
-            INSERT INTO aws_cost_daily (usage_date, account_id, service, cost)
-            VALUES (:usage_date, :account_id, :service, :cost)
-        """),
-        {
-            "usage_date": row["usage_date"].date(),
-            "account_id": ACCOUNT_ID,
-            "service": row["service"],
-            "cost": float(row["cost"])
-        }
-    )
-
-db.commit()
-db.close()
-
-print("AWS cost CSV imported successfully (normalized)")
-
+if __name__ == "__main__":
+    main()

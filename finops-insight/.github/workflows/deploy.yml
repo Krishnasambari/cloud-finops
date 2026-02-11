@@ -1,0 +1,31 @@
+name: Production Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Ubuntu
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: deploy
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /var/www/app
+
+            if [ ! -d ".git" ]; then
+              git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git .
+            else
+              git pull origin main
+            fi
+
+            sudo systemctl restart nginx
